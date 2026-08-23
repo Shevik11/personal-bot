@@ -7,11 +7,21 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
+
+from .shopping import (
+    SHOPPING_BUTTON,
+    handle_shopping_text,
+    main_menu_markup,
+    shopping_callback,
+    shopping_notes,
+)
+from .storage import initialize_database
 
 LOGGER = logging.getLogger(__name__)
 
@@ -22,7 +32,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         await update.message.reply_text(
             "Hi! I am ready to help. Send me a message, or use /help to see "
-            "what I can do."
+            "what I can do.",
+            reply_markup=main_menu_markup(),
         )
 
 
@@ -33,7 +44,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(
             "/start — welcome message\n"
             "/help — show this help\n"
-            "/echo <text> — repeat text back to you"
+            "/echo <text> — repeat text back to you\n"
+            "/shopping — open shopping notes"
         )
 
 
@@ -46,19 +58,30 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply to regular text messages."""
+    if await handle_shopping_text(update, context):
+        return
+
     del context
     if update.message:
         await update.message.reply_text(
-            f"You said: {update.message.text}\nTry /help for available commands."
+            f"You said: {update.message.text}\nTry /help or {SHOPPING_BUTTON}."
         )
 
 
 def build_application(token: str) -> Application:
     """Build the Telegram application and register its handlers."""
+    initialize_database()
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("echo", echo))
+    application.add_handler(CommandHandler("shopping", shopping_notes))
+    application.add_handler(
+        MessageHandler(filters.Regex(f"^{SHOPPING_BUTTON}$"), shopping_notes)
+    )
+    application.add_handler(
+        CallbackQueryHandler(shopping_callback, pattern=r"^shopping:")
+    )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
