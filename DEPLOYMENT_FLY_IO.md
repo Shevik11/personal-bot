@@ -28,7 +28,7 @@ Choose a globally unique app name, for example personal-bot-yourname, and select
 Edit fly.toml and make sure it contains a mount for the database:
 
     [mounts]
-      source = "personal_bot_data"
+      source = "data"
       destination = "/app/data"
       snapshot_retention = 14
 
@@ -38,7 +38,7 @@ The Dockerfile already sets SHOPPING_NOTES_DB to /app/data/shopping_notes.db.
 
 Use the same region selected for the app. Replace APP_NAME and REGION with your values:
 
-    fly volumes create personal_bot_data --app APP_NAME --region REGION --size 1 --snapshot-retention 14
+    fly volumes create data --app APP_NAME --region REGION --size 1 --snapshot-retention 14
 
 Fly takes daily volume snapshots by default. The command above keeps new snapshots for 14 days. Never destroy this volume unless you have a separate backup.
 
@@ -102,7 +102,7 @@ List available snapshots:
 
 Fly snapshots are useful for recovery, but keep an additional copy for important data. A snapshot can be restored into a new volume with:
 
-    fly volumes create personal_bot_data_restore --app APP_NAME --region REGION --snapshot-id SNAPSHOT_ID --size 1
+    fly volumes create data_restore --app APP_NAME --region REGION --snapshot-id SNAPSHOT_ID --size 1
 
 Do not delete the original volume until the restored volume and database have been verified.
 
