@@ -173,6 +173,9 @@ def main() -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         level=logging.INFO,
     )
+    # HTTP request URLs contain the Telegram bot token; never log them.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     LOGGER.info("Starting Telegram bot")
     migrate_database()
     build_application(token).run_polling()

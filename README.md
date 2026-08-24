@@ -120,6 +120,8 @@ For example:
 
 The import limit is 1,000 rows and 2 MB. Exact duplicate expenses are skipped.
 
+Finance also has reports for the previous calendar week and previous calendar month. Each report shows the exact date range, every matching expense, and the total.
+
 ### Import the old workbook
 
 The importer reads only the consolidated first sheet (`Всі місяці`) and skips exact duplicates. Run a dry-run first, then add `--apply` when the count looks right:

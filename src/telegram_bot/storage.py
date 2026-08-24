@@ -449,3 +449,22 @@ async def expense_exists(
             .limit(1)
         )
         return expense_id is not None
+
+
+async def list_expenses(
+    user_id: int,
+    start_date: str,
+    end_date: str,
+) -> list[FinanceExpense]:
+    """List a user's expenses in a date range, newest first."""
+    async with db.session_scope() as session:
+        result = await session.scalars(
+            select(FinanceExpense)
+            .where(
+                FinanceExpense.user_id == user_id,
+                FinanceExpense.expense_date >= start_date,
+                FinanceExpense.expense_date <= end_date,
+            )
+            .order_by(FinanceExpense.expense_date.desc(), FinanceExpense.id.desc())
+        )
+        return list(result.all())

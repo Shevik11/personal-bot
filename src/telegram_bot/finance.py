@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -29,6 +29,8 @@ def _finance_menu_markup() -> InlineKeyboardMarkup:
         [
             [InlineKeyboardButton("➕ Add expense", callback_data="finance:add")],
             [InlineKeyboardButton("📥 Import CSV", callback_data="finance:import")],
+            [InlineKeyboardButton("📊 Last week", callback_data="finance:report:last_week")],
+            [InlineKeyboardButton("📊 Last month", callback_data="finance:report:last_month")],
         ]
     )
 
@@ -60,7 +62,8 @@ async def finance_callback(
 ) -> None:
     """Handle finance menu buttons."""
     query = update.callback_query
-    if not query:
+    user = update.effective_user
+    if not query or not user:
         return
 
     await query.answer()
@@ -91,6 +94,87 @@ async def finance_callback(
             "Dates must use YYYY-MM-DD. Existing identical expenses will be skipped.",
             reply_markup=_cancel_markup(),
         )
+    elif data == "finance:report:last_week":
+        start_date, end_date = _last_week_range()
+        await _show_expense_report(
+            query,
+            context,
+            user_id=user.id,
+            title="📊 Expenses from last week",
+            start_date=start_date,
+            end_date=end_date,
+        )
+    elif data == "finance:report:last_month":
+        start_date, end_date = _last_month_range()
+        await _show_expense_report(
+            query,
+            context,
+            user_id=user.id,
+            title="📊 Expenses from last month",
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+
+def _last_week_range() -> tuple[str, str]:
+    today = datetime.now().astimezone().date()
+    this_monday = today - timedelta(days=today.weekday())
+    last_monday = this_monday - timedelta(days=7)
+    last_sunday = this_monday - timedelta(days=1)
+    return last_monday.isoformat(), last_sunday.isoformat()
+
+
+def _last_month_range() -> tuple[str, str]:
+    today = datetime.now().astimezone().date()
+    this_month_start = date(today.year, today.month, 1)
+    last_month_end = this_month_start - timedelta(days=1)
+    last_month_start = date(last_month_end.year, last_month_end.month, 1)
+    return last_month_start.isoformat(), last_month_end.isoformat()
+
+
+async def _show_expense_report(
+    query,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: int,
+    title: str,
+    start_date: str,
+    end_date: str,
+) -> None:
+    expenses = await storage.list_expenses(user_id, start_date, end_date)
+    total_minor = sum(expense.amount_minor for expense in expenses)
+    lines = [
+        title,
+        f"{start_date} — {end_date}",
+        f"Total: {_format_amount(total_minor)} ({len(expenses)} expenses)",
+        "",
+    ]
+    lines.extend(
+        f"• {expense.expense_date}: {_format_amount(expense.amount_minor)} — "
+        f"{expense.merchant} — {expense.description}"
+        for expense in expenses
+    )
+    if not expenses:
+        lines.append("No expenses found for this period.")
+
+    chunks: list[str] = []
+    current = ""
+    for line in lines:
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > 3900 and current:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+
+    report_markup = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅ Finance menu", callback_data="finance:menu")]]
+    )
+    await query.edit_message_text(chunks[0], reply_markup=report_markup)
+    for chunk in chunks[1:]:
+        if query.message:
+            await context.bot.send_message(chat_id=query.message.chat_id, text=chunk)
 def _parse_amount(value: str) -> int:
     normalized = value.strip().replace(" ", "").replace("\u00a0", "")
     normalized = normalized.replace(",", ".")
