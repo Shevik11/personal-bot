@@ -29,7 +29,13 @@ from .events import (
     events_menu,
     handle_events_text,
 )
-from .finance import FINANCE_BUTTON, finance_callback, finance_menu, handle_finance_text
+from .finance import (
+    FINANCE_BUTTON,
+    finance_callback,
+    finance_menu,
+    handle_finance_document,
+    handle_finance_text,
+)
 from .shopping import (
     SHOPPING_BUTTON,
     handle_shopping_text,
@@ -69,7 +75,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/help — show this help\n"
             "/echo <text> — repeat text back to you\n"
             "/shopping — open shopping notes\n"
-            "/finance — manage expenses and statistics\n"
+            "/finance — record expenses\n"
             "/birthdays — manage birthday reminders\n"
             "/todo — manage your default to-do list\n"
             "/events — manage calendar events"
@@ -142,6 +148,9 @@ def build_application(token: str) -> Application:
     application.add_handler(CallbackQueryHandler(todo_callback, pattern=r"^todo:"))
     application.add_handler(
         CallbackQueryHandler(events_callback, pattern=r"^events:")
+    )
+    application.add_handler(
+        MessageHandler(filters.Document.ALL, handle_finance_document)
     )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)

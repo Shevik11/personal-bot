@@ -1,43 +1,34 @@
-"""Finance entry and natural-language statistics workflows."""
+"""Finance expense entry workflow."""
 
 from __future__ import annotations
 
-import json
-import logging
-import os
+import csv
+import io
 from datetime import UTC, date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from typing import Any
 
-from anthropic import AsyncAnthropic
+from sqlalchemy.exc import SQLAlchemyError
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from . import storage
 
-LOGGER = logging.getLogger(__name__)
-
 FINANCE_BUTTON = "💰 Finance"
 FINANCE_STATE = "finance_state"
 STATE_EXPENSE = "finance_expense"
-STATE_STATISTICS = "finance_statistics"
+STATE_IMPORT = "finance_import"
 MAX_MERCHANT_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 300
-
-
-class FinanceConfigurationError(RuntimeError):
-    """Raised when Claude statistics are requested without configuration."""
+MAX_IMPORT_BYTES = 2 * 1024 * 1024
+MAX_IMPORT_ROWS = 1000
 
 
 def _finance_menu_markup() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton("➕ Add expense", callback_data="finance:add")],
-            [
-                InlineKeyboardButton(
-                    "🤖 Ask statistics", callback_data="finance:statistics"
-                )
-            ],
+            [InlineKeyboardButton("📥 Import CSV", callback_data="finance:import")],
         ]
     )
 
@@ -90,18 +81,16 @@ async def finance_callback(
             "YYYY-MM-DD | amount | merchant | what you bought",
             reply_markup=_cancel_markup(),
         )
-    elif data == "finance:statistics":
-        context.user_data[FINANCE_STATE] = STATE_STATISTICS
+    elif data == "finance:import":
+        context.user_data[FINANCE_STATE] = STATE_IMPORT
         await query.edit_message_text(
-            "What would you like to know?\n\n"
-            "Examples:\n"
-            "• How much did I spend in Сільпо in August?\n"
-            "• Show my spending by month this year.\n"
-            "• What did I spend the most on?",
+            "Upload a UTF-8 CSV file with this header:\n\n"
+            "date,amount,merchant,description\n\n"
+            "Example row:\n"
+            "2026-08-24,250.50,Silpo,groceries\n\n"
+            "Dates must use YYYY-MM-DD. Existing identical expenses will be skipped.",
             reply_markup=_cancel_markup(),
         )
-
-
 def _parse_amount(value: str) -> int:
     normalized = value.strip().replace(" ", "").replace("\u00a0", "")
     normalized = normalized.replace(",", ".")
@@ -189,156 +178,118 @@ async def handle_finance_text(
         )
         return True
 
-    if state == STATE_STATISTICS:
-        clear_state(context)
-        await update.message.reply_text("⏳ Checking your finance data…")
-        try:
-            answer = await ask_statistics(update.effective_user.id, text)
-        except FinanceConfigurationError as error:
-            answer = str(error)
-        except Exception:
-            LOGGER.exception("Claude finance statistics request failed")
-            answer = "I could not check the statistics right now. Please try again later."
-        await update.message.reply_text(answer, reply_markup=_finance_menu_markup())
-        return True
-
     clear_state(context)
     return False
 
 
-def _tool_definition() -> dict[str, Any]:
-    return {
-        "name": "get_finance_statistics",
-        "description": (
-            "Query the user's expense database. Use this for totals, averages, "
-            "comparisons, or breakdowns by month, day, merchant, or purchased item."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "start_date": {
-                    "type": "string",
-                    "description": "Inclusive start date in YYYY-MM-DD format.",
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "Inclusive end date in YYYY-MM-DD format.",
-                },
-                "merchant": {
-                    "type": "string",
-                    "description": "Optional case-insensitive merchant filter.",
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Optional case-insensitive purchased-item filter.",
-                },
-                "group_by": {
-                    "type": "string",
-                    "enum": ["none", "day", "month", "merchant", "item"],
-                    "description": "How to break down the result, if requested.",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of breakdown rows, from 1 to 50.",
-                },
-            },
-        },
+def _parse_import_csv(content: bytes) -> list[tuple[str, int, str, str]]:
+    """Validate an uploaded CSV before sending it to the database."""
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise ValueError("The CSV file must use UTF-8 encoding") from error
+
+    first_line = text.splitlines()[0] if text.splitlines() else ""
+    delimiter = ";" if first_line.count(";") > first_line.count(",") else ","
+    reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+    if not reader.fieldnames:
+        raise ValueError("The CSV file must contain a header row")
+
+    fields = {
+        field.strip().casefold(): field
+        for field in reader.fieldnames
+        if field is not None
     }
+    required = {"date", "amount", "merchant", "description"}
+    missing = required - fields.keys()
+    if missing:
+        missing_fields = ", ".join(sorted(missing))
+        raise ValueError(f"CSV header is missing: {missing_fields}")
+
+    expenses: list[tuple[str, int, str, str]] = []
+    for row_number, row in enumerate(reader, start=2):
+        if row.get(None):
+            raise ValueError(f"Row {row_number} has too many columns")
+        values = {
+            name: (row.get(original) or "").strip()
+            for name, original in fields.items()
+        }
+        if not any(values.values()):
+            continue
+        try:
+            expense_date = date.fromisoformat(values["date"]).isoformat()
+            amount_minor = _parse_amount(values["amount"])
+        except ValueError as error:
+            raise ValueError(f"Row {row_number}: {error}") from error
+
+        merchant = values["merchant"]
+        description = values["description"]
+        if not merchant or len(merchant) > MAX_MERCHANT_LENGTH:
+            raise ValueError(
+                f"Row {row_number}: merchant must be 1–{MAX_MERCHANT_LENGTH} characters"
+            )
+        if not description or len(description) > MAX_DESCRIPTION_LENGTH:
+            raise ValueError(
+                f"Row {row_number}: description must be 1–{MAX_DESCRIPTION_LENGTH} characters"
+            )
+        expenses.append((expense_date, amount_minor, merchant, description))
+        if len(expenses) > MAX_IMPORT_ROWS:
+            raise ValueError(f"CSV cannot contain more than {MAX_IMPORT_ROWS} rows")
+
+    if not expenses:
+        raise ValueError("The CSV file does not contain any expense rows")
+    return expenses
 
 
-def _tool_input(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise TypeError("Claude returned invalid finance filters")
+async def handle_finance_document(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    """Import a CSV document while the finance import flow is active."""
+    if not update.message or not update.effective_user or not update.message.document:
+        return False
+    if context.user_data.get(FINANCE_STATE) != STATE_IMPORT:
+        return False
 
-    result: dict[str, Any] = {}
-    for key in ("start_date", "end_date"):
-        candidate = value.get(key)
-        if candidate is not None:
-            if not isinstance(candidate, str):
-                raise ValueError("Finance dates must be strings")
-            result[key] = date.fromisoformat(candidate).isoformat()
-    for key in ("merchant", "description"):
-        candidate = value.get(key)
-        if candidate is not None:
-            if not isinstance(candidate, str):
-                raise ValueError("Finance filters must be strings")
-            result[key] = candidate[:100]
-
-    group_by = value.get("group_by", "none")
-    if group_by not in {"none", "day", "month", "merchant", "item"}:
-        raise ValueError("Claude returned invalid finance grouping")
-    result["group_by"] = group_by
-
-    limit = value.get("limit", 10)
-    result["limit"] = int(limit) if isinstance(limit, (int, float)) else 10
-    return result
-
-
-def _text_response(message: Any) -> str:
-    text = "\n".join(
-        block.text
-        for block in message.content
-        if getattr(block, "type", None) == "text"
-    ).strip()
-    return text or "Claude did not return a text answer."
-
-
-async def ask_statistics(user_id: int, question: str) -> str:
-    """Ask Claude to select a safe statistics query and explain its result."""
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise FinanceConfigurationError(
-            "Statistics are not configured yet. Add ANTHROPIC_API_KEY to .env."
+    document = update.message.document
+    if document.file_size and document.file_size > MAX_IMPORT_BYTES:
+        await update.message.reply_text(
+            "The CSV file is too large. The limit is 2 MB.",
+            reply_markup=_cancel_markup(),
         )
+        return True
+    if not (document.file_name or "").casefold().endswith(".csv"):
+        await update.message.reply_text(
+            "Please upload a file with the .csv extension.",
+            reply_markup=_cancel_markup(),
+        )
+        return True
 
-    model = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
-    today = datetime.now(UTC).date().isoformat()
-    system = (
-        "You are a personal finance statistics assistant. Today is "
-        f"{today}. Use the get_finance_statistics tool for every numeric answer. "
-        "Never invent transactions or numbers. Amounts are integer minor units; "
-        f"100 minor units equal 1 {storage.DEFAULT_CURRENCY}. "
-        "Answer concisely in the user's language and mention the date range used."
+    await update.message.reply_text("⏳ Importing expenses…")
+    try:
+        telegram_file = await context.bot.get_file(document.file_id)
+        content = bytes(await telegram_file.download_as_bytearray())
+        if len(content) > MAX_IMPORT_BYTES:
+            raise ValueError("The CSV file is too large. The limit is 2 MB")
+        expenses = _parse_import_csv(content)
+        added, duplicates = await storage.import_expenses(
+            update.effective_user.id, expenses
+        )
+    except (ValueError, UnicodeError, csv.Error) as error:
+        await update.message.reply_text(
+            f"I could not import that file: {error}.",
+            reply_markup=_cancel_markup(),
+        )
+        return True
+    except (TelegramError, SQLAlchemyError):
+        await update.message.reply_text(
+            "I could not import that file right now. Please try again later.",
+            reply_markup=_cancel_markup(),
+        )
+        return True
+
+    clear_state(context)
+    await update.message.reply_text(
+        f"✅ Import complete. Added: {added}. Skipped duplicates: {duplicates}.",
+        reply_markup=_finance_menu_markup(),
     )
-
-    async with AsyncAnthropic(api_key=api_key) as client:
-        first = await client.messages.create(
-            model=model,
-            max_tokens=800,
-            system=system,
-            tools=[_tool_definition()],
-            messages=[{"role": "user", "content": question}],
-        )
-        tool_use = next(
-            (block for block in first.content if block.type == "tool_use"), None
-        )
-        if tool_use is None:
-            return _text_response(first)
-
-        filters = _tool_input(tool_use.input)
-        statistics = await storage.finance_statistics(user_id, **filters)
-        assistant_content = [
-            block.model_dump() if hasattr(block, "model_dump") else block
-            for block in first.content
-        ]
-        second = await client.messages.create(
-            model=model,
-            max_tokens=800,
-            system=system,
-            tools=[_tool_definition()],
-            messages=[
-                {"role": "user", "content": question},
-                {"role": "assistant", "content": assistant_content},
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_use.id,
-                            "content": json.dumps(statistics),
-                        }
-                    ],
-                },
-            ],
-        )
-        return _text_response(second)
+    return True

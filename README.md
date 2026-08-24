@@ -90,6 +90,8 @@ docker run -d --name telegram-bot --restart unless-stopped `
 
 The database is stored at `/app/data/shopping_notes.db` inside the container and remains available when the container is recreated.
 
+For a full Fly.io deployment, see [DEPLOYMENT_FLY_IO.md](DEPLOYMENT_FLY_IO.md).
+
 ## Finance checker
 
 Open `💰 Finance` or run `/finance`.
@@ -108,7 +110,15 @@ This uses today's date. To provide a date explicitly:
 
 Amounts are stored as integer minor units to avoid floating-point rounding errors. The default currency is UAH.
 
-To ask for statistics, choose `🤖 Ask statistics` and write a question such as `How much did I spend in Сільпо in August?`. The bot sends Claude only the question and the resulting aggregates; Claude cannot execute arbitrary SQL or access the raw database. Set `ANTHROPIC_API_KEY` in `.env` to enable this feature. `CLAUDE_MODEL` can override the default model.
+To import multiple expenses, choose `📥 Import CSV` and upload a UTF-8 CSV file with this header:
+
+    date,amount,merchant,description
+
+For example:
+
+    2026-08-24,250.50,Silpo,groceries
+
+The import limit is 1,000 rows and 2 MB. Exact duplicate expenses are skipped.
 
 ### Import the old workbook
 

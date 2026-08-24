@@ -5,7 +5,7 @@ from __future__ import annotations
 import calendar
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from . import db
 from .models import (
@@ -385,6 +385,47 @@ async def add_expense(
         return expense
 
 
+async def import_expenses(
+    user_id: int,
+    expenses: list[tuple[str, int, str, str]],
+    currency: str = DEFAULT_CURRENCY,
+) -> tuple[int, int]:
+    """Import expenses atomically, returning added and duplicate counts."""
+    added = 0
+    duplicates = 0
+    async with db.session_scope() as session:
+        for expense_date, amount_minor, merchant, description in expenses:
+            existing = await session.scalar(
+                select(FinanceExpense.id)
+                .where(
+                    FinanceExpense.user_id == user_id,
+                    FinanceExpense.expense_date == expense_date,
+                    FinanceExpense.amount_minor == amount_minor,
+                    FinanceExpense.currency == currency,
+                    FinanceExpense.merchant == merchant,
+                    FinanceExpense.description == description,
+                )
+                .limit(1)
+            )
+            if existing is not None:
+                duplicates += 1
+                continue
+
+            session.add(
+                FinanceExpense(
+                    user_id=user_id,
+                    expense_date=expense_date,
+                    amount_minor=amount_minor,
+                    currency=currency,
+                    merchant=merchant,
+                    description=description,
+                    created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+                )
+            )
+            added += 1
+    return added, duplicates
+
+
 async def expense_exists(
     user_id: int,
     expense_date: str,
@@ -408,86 +449,3 @@ async def expense_exists(
             .limit(1)
         )
         return expense_id is not None
-
-
-async def finance_statistics(
-    user_id: int,
-    start_date: str | None = None,
-    end_date: str | None = None,
-    merchant: str | None = None,
-    description: str | None = None,
-    group_by: str = "none",
-    limit: int = 10,
-) -> dict[str, object]:
-    """Return deterministic expense totals for Claude or a direct report."""
-    group_expressions = {
-        "day": FinanceExpense.expense_date,
-        "month": func.substr(FinanceExpense.expense_date, 1, 7),
-        "merchant": FinanceExpense.merchant,
-        "item": FinanceExpense.description,
-    }
-    if group_by not in group_expressions and group_by != "none":
-        raise ValueError("Unsupported finance statistics grouping")
-
-    conditions = [FinanceExpense.user_id == user_id]
-    if start_date:
-        conditions.append(FinanceExpense.expense_date >= start_date)
-    if end_date:
-        conditions.append(FinanceExpense.expense_date <= end_date)
-    if merchant:
-        conditions.append(FinanceExpense.merchant.ilike(f"%{merchant}%"))
-    if description:
-        conditions.append(FinanceExpense.description.ilike(f"%{description}%"))
-
-    safe_limit = max(1, min(limit, 50))
-    async with db.session_scope() as session:
-        totals = (
-            await session.execute(
-                select(
-                    func.count(FinanceExpense.id).label("count"),
-                    func.coalesce(func.sum(FinanceExpense.amount_minor), 0).label(
-                        "total_minor"
-                    ),
-                    func.coalesce(func.avg(FinanceExpense.amount_minor), 0).label(
-                        "average_minor"
-                    ),
-                ).where(*conditions)
-            )
-        ).one()
-        result: dict[str, object] = {
-            "count": totals.count,
-            "total_minor": totals.total_minor,
-            "average_minor": round(float(totals.average_minor), 2),
-            "currency": DEFAULT_CURRENCY,
-            "start_date": start_date,
-            "end_date": end_date,
-            "merchant_filter": merchant,
-            "description_filter": description,
-            "group_by": group_by,
-        }
-        if group_by == "none":
-            return result
-
-        expression = group_expressions[group_by]
-        grouped = (
-            await session.execute(
-                select(
-                    expression.label("label"),
-                    func.count(FinanceExpense.id).label("count"),
-                    func.sum(FinanceExpense.amount_minor).label("total_minor"),
-                )
-                .where(*conditions)
-                .group_by(expression)
-                .order_by(func.sum(FinanceExpense.amount_minor).desc())
-                .limit(safe_limit)
-            )
-        ).all()
-        result["groups"] = [
-            {
-                "label": row.label,
-                "count": row.count,
-                "total_minor": row.total_minor,
-            }
-            for row in grouped
-        ]
-        return result
