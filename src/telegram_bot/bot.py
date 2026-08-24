@@ -23,6 +23,12 @@ from .birthdays import (
     schedule_birthday_jobs,
 )
 from .db import migrate_database
+from .events import (
+    EVENTS_BUTTON,
+    events_callback,
+    events_menu,
+    handle_events_text,
+)
 from .finance import FINANCE_BUTTON, finance_callback, finance_menu, handle_finance_text
 from .shopping import (
     SHOPPING_BUTTON,
@@ -65,7 +71,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/shopping — open shopping notes\n"
             "/finance — manage expenses and statistics\n"
             "/birthdays — manage birthday reminders\n"
-            "/todo — manage your default to-do list"
+            "/todo — manage your default to-do list\n"
+            "/events — manage calendar events"
         )
 
 
@@ -86,12 +93,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if await handle_todo_text(update, context):
         return
+    if await handle_events_text(update, context):
+        return
 
     del context
     if update.message:
         await update.message.reply_text(
             f"You said: {update.message.text}\nTry /help, {SHOPPING_BUTTON}, "
-            f"{FINANCE_BUTTON}, {BIRTHDAYS_BUTTON}, or {TODO_BUTTON}."
+            f"{FINANCE_BUTTON}, {BIRTHDAYS_BUTTON}, {TODO_BUTTON}, or {EVENTS_BUTTON}."
         )
 
 
@@ -105,6 +114,7 @@ def build_application(token: str) -> Application:
     application.add_handler(CommandHandler("finance", finance_menu))
     application.add_handler(CommandHandler("birthdays", birthday_menu))
     application.add_handler(CommandHandler("todo", todo_menu))
+    application.add_handler(CommandHandler("events", events_menu))
     application.add_handler(
         MessageHandler(filters.Regex(f"^{SHOPPING_BUTTON}$"), shopping_notes)
     )
@@ -118,6 +128,9 @@ def build_application(token: str) -> Application:
         MessageHandler(filters.Regex(f"^{TODO_BUTTON}$"), todo_menu)
     )
     application.add_handler(
+        MessageHandler(filters.Regex(f"^{EVENTS_BUTTON}$"), events_menu)
+    )
+    application.add_handler(
         CallbackQueryHandler(shopping_callback, pattern=r"^shopping:")
     )
     application.add_handler(
@@ -127,6 +140,9 @@ def build_application(token: str) -> Application:
         CallbackQueryHandler(birthday_callback, pattern=r"^birthday:")
     )
     application.add_handler(CallbackQueryHandler(todo_callback, pattern=r"^todo:"))
+    application.add_handler(
+        CallbackQueryHandler(events_callback, pattern=r"^events:")
+    )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )

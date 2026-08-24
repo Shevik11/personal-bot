@@ -12,6 +12,7 @@ from telegram.ext import ContextTypes
 
 from . import storage
 from .birthdays import BIRTHDAYS_BUTTON
+from .events import EVENTS_BUTTON
 from .finance import FINANCE_BUTTON
 from .models import Category, Note
 from .todo import TODO_BUTTON
@@ -27,7 +28,13 @@ MAX_NOTE_LENGTH = 500
 
 def main_menu_markup() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [[SHOPPING_BUTTON], [FINANCE_BUTTON], [BIRTHDAYS_BUTTON], [TODO_BUTTON]],
+        [
+            [SHOPPING_BUTTON],
+            [FINANCE_BUTTON],
+            [BIRTHDAYS_BUTTON],
+            [TODO_BUTTON],
+            [EVENTS_BUTTON],
+        ],
         resize_keyboard=True,
         is_persistent=True,
     )

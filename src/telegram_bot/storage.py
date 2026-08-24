@@ -8,7 +8,15 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 
 from . import db
-from .models import Birthday, BotUser, Category, FinanceExpense, Note, TodoItem
+from .models import (
+    Birthday,
+    BotUser,
+    CalendarEvent,
+    Category,
+    FinanceExpense,
+    Note,
+    TodoItem,
+)
 
 DEFAULT_CATEGORIES = ("Groceries", "Household", "Pharmacy", "Other")
 DEFAULT_CURRENCY = "UAH"
@@ -92,6 +100,86 @@ async def delete_todo(user_id: int, todo_id: int) -> bool:
             return False
         await session.delete(todo)
         return True
+
+
+async def add_event(
+    user_id: int, title: str, start_date: str, end_date: str
+) -> CalendarEvent:
+    async with db.session_scope() as session:
+        user = await session.get(BotUser, user_id)
+        if user is None:
+            user = BotUser(
+                user_id=user_id,
+                created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+            session.add(user)
+            await session.flush()
+
+        event = CalendarEvent(
+            user_id=user_id,
+            title=title,
+            start_date=start_date,
+            end_date=end_date,
+            created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+        session.add(event)
+        await session.flush()
+        return event
+
+
+async def list_events(
+    user_id: int,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> list[CalendarEvent]:
+    async with db.session_scope() as session:
+        query = select(CalendarEvent).where(CalendarEvent.user_id == user_id)
+        if from_date is not None:
+            query = query.where(CalendarEvent.end_date >= from_date)
+        if to_date is not None:
+            query = query.where(CalendarEvent.start_date <= to_date)
+        result = await session.scalars(
+            query.order_by(CalendarEvent.start_date, CalendarEvent.end_date, CalendarEvent.id)
+        )
+        return list(result.all())
+
+
+async def get_event(user_id: int, event_id: int) -> CalendarEvent | None:
+    async with db.session_scope() as session:
+        return await session.scalar(
+            select(CalendarEvent).where(
+                CalendarEvent.user_id == user_id,
+                CalendarEvent.id == event_id,
+            )
+        )
+
+
+async def delete_event(user_id: int, event_id: int) -> bool:
+    async with db.session_scope() as session:
+        event = await session.scalar(
+            select(CalendarEvent).where(
+                CalendarEvent.user_id == user_id,
+                CalendarEvent.id == event_id,
+            )
+        )
+        if event is None:
+            return False
+        await session.delete(event)
+        return True
+
+
+async def events_on_date(user_id: int, event_date: str) -> list[CalendarEvent]:
+    async with db.session_scope() as session:
+        result = await session.scalars(
+            select(CalendarEvent)
+            .where(
+                CalendarEvent.user_id == user_id,
+                CalendarEvent.start_date <= event_date,
+                CalendarEvent.end_date >= event_date,
+            )
+            .order_by(CalendarEvent.start_date, CalendarEvent.end_date, CalendarEvent.id)
+        )
+        return list(result.all())
 
 
 async def add_birthday(

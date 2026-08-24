@@ -49,6 +49,22 @@ An optional birth year can be included as `Alex | 24.08.1990` or `Alex | 1990-08
 
 Open `✅ To-do list` or run `/todo` to manage your default personal task list. You can add tasks, view them, delete them manually, or press `✅ Complete`; completing a task deletes it from the list immediately.
 
+## Events
+
+Open `📅 Events` or run `/events` to save date-based events. A one-day event can be entered as:
+
+```text
+Doctor appointment | 2026-09-02
+```
+
+For an event lasting several days, use an inclusive start and end date:
+
+```text
+Mountains | 2026-08-29 | 2026-08-30
+```
+
+When browsing by day, a multi-day event appears on every date in its range, so the Mountains event is visible on both Saturday and Sunday.
+
 ## Storage choice
 
 SQLite is the primary storage for this bot. It is a better fit than one JSON file because it provides transactions, constraints, indexes, and efficient queries as more entities and relationships are added. JSON is still useful later for import/export or backups, but it should not be the main live database: updating nested data usually means rewriting the whole file and concurrent writes are harder to handle safely.
