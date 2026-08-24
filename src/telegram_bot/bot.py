@@ -14,6 +14,14 @@ from telegram.ext import (
     filters,
 )
 
+from . import storage
+from .birthdays import (
+    BIRTHDAYS_BUTTON,
+    birthday_callback,
+    birthday_menu,
+    handle_birthday_text,
+    schedule_birthday_jobs,
+)
 from .db import migrate_database
 from .finance import FINANCE_BUTTON, finance_callback, finance_menu, handle_finance_text
 from .shopping import (
@@ -30,6 +38,8 @@ LOGGER = logging.getLogger(__name__)
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Greet a user and explain the available commands."""
     del context
+    if update.effective_user:
+        await storage.register_user(update.effective_user.id)
     if update.message:
         await update.message.reply_text(
             "Hi! I am ready to help. Send me a message, or use /help to see "
@@ -47,7 +57,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/help — show this help\n"
             "/echo <text> — repeat text back to you\n"
             "/shopping — open shopping notes\n"
-            "/finance — manage expenses and statistics"
+            "/finance — manage expenses and statistics\n"
+            "/birthdays — manage birthday reminders"
         )
 
 
@@ -64,11 +75,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if await handle_finance_text(update, context):
         return
+    if await handle_birthday_text(update, context):
+        return
 
     del context
     if update.message:
         await update.message.reply_text(
-            f"You said: {update.message.text}\nTry /help, {SHOPPING_BUTTON}, or {FINANCE_BUTTON}."
+            f"You said: {update.message.text}\nTry /help, {SHOPPING_BUTTON}, "
+            f"{FINANCE_BUTTON}, or {BIRTHDAYS_BUTTON}."
         )
 
 
@@ -80,11 +94,15 @@ def build_application(token: str) -> Application:
     application.add_handler(CommandHandler("echo", echo))
     application.add_handler(CommandHandler("shopping", shopping_notes))
     application.add_handler(CommandHandler("finance", finance_menu))
+    application.add_handler(CommandHandler("birthdays", birthday_menu))
     application.add_handler(
         MessageHandler(filters.Regex(f"^{SHOPPING_BUTTON}$"), shopping_notes)
     )
     application.add_handler(
         MessageHandler(filters.Regex(f"^{FINANCE_BUTTON}$"), finance_menu)
+    )
+    application.add_handler(
+        MessageHandler(filters.Regex(f"^{BIRTHDAYS_BUTTON}$"), birthday_menu)
     )
     application.add_handler(
         CallbackQueryHandler(shopping_callback, pattern=r"^shopping:")
@@ -93,8 +111,12 @@ def build_application(token: str) -> Application:
         CallbackQueryHandler(finance_callback, pattern=r"^finance:")
     )
     application.add_handler(
+        CallbackQueryHandler(birthday_callback, pattern=r"^birthday:")
+    )
+    application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )
+    schedule_birthday_jobs(application)
     return application
 
 

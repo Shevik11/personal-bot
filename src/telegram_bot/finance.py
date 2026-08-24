@@ -55,6 +55,8 @@ def clear_state(context: ContextTypes.DEFAULT_TYPE) -> None:
 async def finance_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Open the finance menu."""
     clear_state(context)
+    if update.effective_user:
+        await storage.register_user(update.effective_user.id)
     if update.message:
         await update.message.reply_text(
             "💰 Finance\n\nWhat would you like to do?",

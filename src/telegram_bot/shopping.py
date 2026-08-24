@@ -11,6 +11,7 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from . import storage
+from .birthdays import BIRTHDAYS_BUTTON
 from .finance import FINANCE_BUTTON
 from .models import Category, Note
 
@@ -25,7 +26,7 @@ MAX_NOTE_LENGTH = 500
 
 def main_menu_markup() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [[SHOPPING_BUTTON], [FINANCE_BUTTON]],
+        [[SHOPPING_BUTTON], [FINANCE_BUTTON], [BIRTHDAYS_BUTTON]],
         resize_keyboard=True,
         is_persistent=True,
     )
@@ -86,6 +87,7 @@ async def shopping_notes(
     if not user or not update.message:
         return
 
+    await storage.register_user(user.id)
     await storage.ensure_default_categories(user.id)
     await update.message.reply_text(
         "🛒 Shopping notes\n\nWhat would you like to do?",

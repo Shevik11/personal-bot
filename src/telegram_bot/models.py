@@ -2,12 +2,61 @@
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
+
+
+class BotUser(Base):
+    __tablename__ = "bot_users"
+
+    user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    birthdays: Mapped[list[Birthday]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class Birthday(Base):
+    __tablename__ = "birthdays"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("bot_users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    person_name: Mapped[str] = mapped_column(
+        String(100, collation="NOCASE"), nullable=False
+    )
+    month: Mapped[int] = mapped_column(Integer, nullable=False)
+    day: Mapped[int] = mapped_column(Integer, nullable=False)
+    birth_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    user: Mapped[BotUser] = relationship(back_populates="birthdays")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "person_name",
+            "month",
+            "day",
+            name="uq_birthdays_user_person_date",
+        ),
+        Index("birthdays_by_month_day", "month", "day"),
+        Index("birthdays_by_user", "user_id"),
+    )
 
 
 class Category(Base):

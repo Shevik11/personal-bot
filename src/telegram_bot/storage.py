@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import calendar
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 
 from . import db
-from .models import Category, FinanceExpense, Note
+from .models import Birthday, BotUser, Category, FinanceExpense, Note
 
 DEFAULT_CATEGORIES = ("Groceries", "Household", "Pharmacy", "Other")
 DEFAULT_CURRENCY = "UAH"
@@ -16,6 +17,119 @@ DEFAULT_CURRENCY = "UAH"
 async def initialize_database() -> None:
     """Create missing tables from the SQLAlchemy metadata."""
     await db.initialize_database()
+
+
+async def register_user(user_id: int) -> BotUser:
+    """Register a Telegram user so scheduled messages have a recipient."""
+    async with db.session_scope() as session:
+        user = await session.get(BotUser, user_id)
+        if user is None:
+            user = BotUser(
+                user_id=user_id,
+                created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+            session.add(user)
+            await session.flush()
+        return user
+
+
+async def list_users() -> list[BotUser]:
+    async with db.session_scope() as session:
+        result = await session.scalars(select(BotUser).order_by(BotUser.user_id))
+        return list(result.all())
+
+
+async def add_birthday(
+    user_id: int,
+    person_name: str,
+    month: int,
+    day: int,
+    birth_year: int | None = None,
+) -> tuple[Birthday, bool]:
+    """Save a birthday, returning the record and whether it was new."""
+    async with db.session_scope() as session:
+        user = await session.get(BotUser, user_id)
+        if user is None:
+            user = BotUser(
+                user_id=user_id,
+                created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+            session.add(user)
+            await session.flush()
+
+        birthday = await session.scalar(
+            select(Birthday).where(
+                Birthday.user_id == user_id,
+                Birthday.person_name == person_name,
+                Birthday.month == month,
+                Birthday.day == day,
+            )
+        )
+        if birthday is not None:
+            return birthday, False
+
+        birthday = Birthday(
+            user_id=user_id,
+            person_name=person_name,
+            month=month,
+            day=day,
+            birth_year=birth_year,
+            created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+        session.add(birthday)
+        await session.flush()
+        return birthday, True
+
+
+async def list_birthdays(
+    user_id: int, month: int | None = None
+) -> list[Birthday]:
+    async with db.session_scope() as session:
+        query = select(Birthday).where(Birthday.user_id == user_id)
+        if month is not None:
+            query = query.where(Birthday.month == month)
+        result = await session.scalars(
+            query.order_by(Birthday.month, Birthday.day, Birthday.person_name, Birthday.id)
+        )
+        return list(result.all())
+
+
+async def get_birthday(user_id: int, birthday_id: int) -> Birthday | None:
+    async with db.session_scope() as session:
+        return await session.scalar(
+            select(Birthday).where(
+                Birthday.user_id == user_id,
+                Birthday.id == birthday_id,
+            )
+        )
+
+
+async def delete_birthday(user_id: int, birthday_id: int) -> bool:
+    async with db.session_scope() as session:
+        birthday = await session.scalar(
+            select(Birthday).where(
+                Birthday.user_id == user_id,
+                Birthday.id == birthday_id,
+            )
+        )
+        if birthday is None:
+            return False
+        await session.delete(birthday)
+        return True
+
+
+async def birthdays_for_date(year: int, month: int, day: int) -> list[Birthday]:
+    """Find birthdays for a date, including Feb 29 on Feb 28 in non-leap years."""
+    days = [day]
+    if month == 2 and day == 28 and not calendar.isleap(year):
+        days.append(29)
+    async with db.session_scope() as session:
+        result = await session.scalars(
+            select(Birthday)
+            .where(Birthday.month == month, Birthday.day.in_(days))
+            .order_by(Birthday.user_id, Birthday.person_name, Birthday.id)
+        )
+        return list(result.all())
 
 
 async def ensure_default_categories(user_id: int) -> None:
