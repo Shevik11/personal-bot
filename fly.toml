@@ -1,9 +1,9 @@
-# fly.toml app configuration file generated for personal-bot-sxidla on 2026-08-24T06:34:46Z
+# fly.toml app configuration file generated for personal-bot-a-tayg on 2026-08-24T12:21:54Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'personal-bot-sxidla'
+app = 'personal-bot-a-tayg'
 primary_region = 'ams'
 
 [build]
@@ -11,6 +11,14 @@ primary_region = 'ams'
 [[mounts]]
   source = 'data'
   destination = '/app/data'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
 
 [[vm]]
   memory = '1gb'
