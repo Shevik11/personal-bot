@@ -45,6 +45,10 @@ Alex | 24.08
 
 An optional birth year can be included as `Alex | 24.08.1990` or `Alex | 1990-08-24`. The bot sends birthday-day alerts at `BIRTHDAY_ALERT_TIME` and sends a list for the following month on the first day of each month at `BIRTHDAY_SUMMARY_TIME`. Both times use `BOT_TIMEZONE`; defaults are `09:00`, `09:05`, and `Europe/Kyiv`.
 
+## To-do list
+
+Open `✅ To-do list` or run `/todo` to manage your default personal task list. You can add tasks, view them, delete them manually, or press `✅ Complete`; completing a task deletes it from the list immediately.
+
 ## Storage choice
 
 SQLite is the primary storage for this bot. It is a better fit than one JSON file because it provides transactions, constraints, indexes, and efficient queries as more entities and relationships are added. JSON is still useful later for import/export or backups, but it should not be the main live database: updating nested data usually means rewriting the whole file and concurrent writes are harder to handle safely.

@@ -14,6 +14,7 @@ from . import storage
 from .birthdays import BIRTHDAYS_BUTTON
 from .finance import FINANCE_BUTTON
 from .models import Category, Note
+from .todo import TODO_BUTTON
 
 SHOPPING_BUTTON = "🛒 Shopping notes"
 SHOPPING_STATE = "shopping_state"
@@ -26,7 +27,7 @@ MAX_NOTE_LENGTH = 500
 
 def main_menu_markup() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [[SHOPPING_BUTTON], [FINANCE_BUTTON], [BIRTHDAYS_BUTTON]],
+        [[SHOPPING_BUTTON], [FINANCE_BUTTON], [BIRTHDAYS_BUTTON], [TODO_BUTTON]],
         resize_keyboard=True,
         is_persistent=True,
     )

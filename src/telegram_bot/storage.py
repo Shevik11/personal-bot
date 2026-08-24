@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 
 from . import db
-from .models import Birthday, BotUser, Category, FinanceExpense, Note
+from .models import Birthday, BotUser, Category, FinanceExpense, Note, TodoItem
 
 DEFAULT_CATEGORIES = ("Groceries", "Household", "Pharmacy", "Other")
 DEFAULT_CURRENCY = "UAH"
@@ -37,6 +37,61 @@ async def list_users() -> list[BotUser]:
     async with db.session_scope() as session:
         result = await session.scalars(select(BotUser).order_by(BotUser.user_id))
         return list(result.all())
+
+
+async def add_todo(user_id: int, text: str) -> TodoItem:
+    async with db.session_scope() as session:
+        user = await session.get(BotUser, user_id)
+        if user is None:
+            user = BotUser(
+                user_id=user_id,
+                created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            )
+            session.add(user)
+            await session.flush()
+
+        todo = TodoItem(
+            user_id=user_id,
+            text=text,
+            created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+        session.add(todo)
+        await session.flush()
+        return todo
+
+
+async def list_todos(user_id: int) -> list[TodoItem]:
+    async with db.session_scope() as session:
+        result = await session.scalars(
+            select(TodoItem)
+            .where(TodoItem.user_id == user_id)
+            .order_by(TodoItem.id)
+        )
+        return list(result.all())
+
+
+async def get_todo(user_id: int, todo_id: int) -> TodoItem | None:
+    async with db.session_scope() as session:
+        return await session.scalar(
+            select(TodoItem).where(
+                TodoItem.user_id == user_id,
+                TodoItem.id == todo_id,
+            )
+        )
+
+
+async def delete_todo(user_id: int, todo_id: int) -> bool:
+    async with db.session_scope() as session:
+        todo = await session.scalar(
+            select(TodoItem).where(
+                TodoItem.user_id == user_id,
+                TodoItem.id == todo_id,
+            )
+        )
+        if todo is None:
+            return False
+        await session.delete(todo)
+        return True
 
 
 async def add_birthday(

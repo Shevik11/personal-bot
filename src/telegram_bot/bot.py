@@ -31,6 +31,12 @@ from .shopping import (
     shopping_callback,
     shopping_notes,
 )
+from .todo import (
+    TODO_BUTTON,
+    handle_todo_text,
+    todo_callback,
+    todo_menu,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -58,7 +64,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/echo <text> — repeat text back to you\n"
             "/shopping — open shopping notes\n"
             "/finance — manage expenses and statistics\n"
-            "/birthdays — manage birthday reminders"
+            "/birthdays — manage birthday reminders\n"
+            "/todo — manage your default to-do list"
         )
 
 
@@ -77,12 +84,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if await handle_birthday_text(update, context):
         return
+    if await handle_todo_text(update, context):
+        return
 
     del context
     if update.message:
         await update.message.reply_text(
             f"You said: {update.message.text}\nTry /help, {SHOPPING_BUTTON}, "
-            f"{FINANCE_BUTTON}, or {BIRTHDAYS_BUTTON}."
+            f"{FINANCE_BUTTON}, {BIRTHDAYS_BUTTON}, or {TODO_BUTTON}."
         )
 
 
@@ -95,6 +104,7 @@ def build_application(token: str) -> Application:
     application.add_handler(CommandHandler("shopping", shopping_notes))
     application.add_handler(CommandHandler("finance", finance_menu))
     application.add_handler(CommandHandler("birthdays", birthday_menu))
+    application.add_handler(CommandHandler("todo", todo_menu))
     application.add_handler(
         MessageHandler(filters.Regex(f"^{SHOPPING_BUTTON}$"), shopping_notes)
     )
@@ -105,6 +115,9 @@ def build_application(token: str) -> Application:
         MessageHandler(filters.Regex(f"^{BIRTHDAYS_BUTTON}$"), birthday_menu)
     )
     application.add_handler(
+        MessageHandler(filters.Regex(f"^{TODO_BUTTON}$"), todo_menu)
+    )
+    application.add_handler(
         CallbackQueryHandler(shopping_callback, pattern=r"^shopping:")
     )
     application.add_handler(
@@ -113,6 +126,7 @@ def build_application(token: str) -> Application:
     application.add_handler(
         CallbackQueryHandler(birthday_callback, pattern=r"^birthday:")
     )
+    application.add_handler(CallbackQueryHandler(todo_callback, pattern=r"^todo:"))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     )

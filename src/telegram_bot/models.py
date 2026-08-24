@@ -27,6 +27,9 @@ class BotUser(Base):
     birthdays: Mapped[list[Birthday]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    todo_items: Mapped[list[TodoItem]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Birthday(Base):
@@ -57,6 +60,21 @@ class Birthday(Base):
         Index("birthdays_by_month_day", "month", "day"),
         Index("birthdays_by_user", "user_id"),
     )
+
+
+class TodoItem(Base):
+    __tablename__ = "todo_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("bot_users.user_id", ondelete="CASCADE"), nullable=False
+    )
+    text: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    user: Mapped[BotUser] = relationship(back_populates="todo_items")
+
+    __table_args__ = (Index("todo_items_by_user", "user_id"),)
 
 
 class Category(Base):
