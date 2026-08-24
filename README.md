@@ -27,6 +27,14 @@ Open `🛒 Shopping notes` or run `/shopping` to create and view notes. Notes ar
 
 Shopping notes are stored in `shopping_notes.db` by default. Set `SHOPPING_NOTES_DB` in `.env` to use a different path.
 
+The application uses SQLAlchemy 2 ORM with async SQLite sessions. Alembic manages schema versions; the bot applies pending migrations at startup. To apply them manually:
+
+```powershell
+uv run alembic upgrade head
+```
+
+Runtime repositories use ORM queries, including the finance aggregate queries. The only SQL-like statements outside migrations are SQLite connection pragmas for foreign keys, WAL mode, and lock timeouts.
+
 ## Storage choice
 
 SQLite is the primary storage for this bot. It is a better fit than one JSON file because it provides transactions, constraints, indexes, and efficient queries as more entities and relationships are added. JSON is still useful later for import/export or backups, but it should not be the main live database: updating nested data usually means rewriting the whole file and concurrent writes are harder to handle safely.
@@ -51,6 +59,37 @@ docker run -d --name telegram-bot --restart unless-stopped `
 ```
 
 The database is stored at `/app/data/shopping_notes.db` inside the container and remains available when the container is recreated.
+
+## Finance checker
+
+Open `💰 Finance` or run `/finance`.
+
+To save an expense, use:
+
+```text
+250.50 | Сільпо | продукти
+```
+
+This uses today's date. To provide a date explicitly:
+
+```text
+2026-08-24 | 250.50 | Сільпо | продукти
+```
+
+Amounts are stored as integer minor units to avoid floating-point rounding errors. The default currency is UAH.
+
+To ask for statistics, choose `🤖 Ask statistics` and write a question such as `How much did I spend in Сільпо in August?`. The bot sends Claude only the question and the resulting aggregates; Claude cannot execute arbitrary SQL or access the raw database. Set `ANTHROPIC_API_KEY` in `.env` to enable this feature. `CLAUDE_MODEL` can override the default model.
+
+### Import the old workbook
+
+The importer reads only the consolidated first sheet (`Всі місяці`) and skips exact duplicates. Run a dry-run first, then add `--apply` when the count looks right:
+
+```powershell
+uv run python scripts/import_expenses.py data/Витрати.xlsx --user-id 123
+uv run python scripts/import_expenses.py data/Витрати.xlsx --user-id 123 --apply
+```
+
+Replace `123` with your Telegram user ID. The workbook in `data/` is ignored by Git and is not included in the Docker image.
 
 ## Development
 

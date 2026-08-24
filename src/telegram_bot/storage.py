@@ -1,136 +1,236 @@
-"""SQLite persistence for shopping note categories and notes."""
+"""Async ORM repositories for shopping notes and finance expenses."""
 
 from __future__ import annotations
 
-import os
-import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
+
+from sqlalchemy import func, select
+
+from . import db
+from .models import Category, FinanceExpense, Note
 
 DEFAULT_CATEGORIES = ("Groceries", "Household", "Pharmacy", "Other")
+DEFAULT_CURRENCY = "UAH"
 
 
-def _database_path() -> Path:
-    configured_path = os.getenv("SHOPPING_NOTES_DB", "shopping_notes.db").strip()
-    return Path(configured_path or "shopping_notes.db").expanduser()
+async def initialize_database() -> None:
+    """Create missing tables from the SQLAlchemy metadata."""
+    await db.initialize_database()
 
 
-def _connect() -> sqlite3.Connection:
-    path = _database_path()
-    if path.parent != Path("."):
-        path.parent.mkdir(parents=True, exist_ok=True)
+async def ensure_default_categories(user_id: int) -> None:
+    """Create starter categories without replacing custom ones."""
+    async with db.session_scope() as session:
+        existing = {
+            name.casefold()
+            for name in (
+                await session.scalars(
+                    select(Category.name).where(Category.user_id == user_id)
+                )
+            ).all()
+        }
+        for name in DEFAULT_CATEGORIES:
+            if name.casefold() not in existing:
+                session.add(Category(user_id=user_id, name=name))
 
-    connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+
+async def list_categories(user_id: int) -> list[Category]:
+    async with db.session_scope() as session:
+        result = await session.scalars(
+            select(Category)
+            .where(Category.user_id == user_id)
+            .order_by(Category.name.collate("NOCASE"))
+        )
+        return list(result.all())
 
 
-def initialize_database() -> None:
-    """Create the shopping notes tables if they do not exist."""
-    with _connect() as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS categories (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                UNIQUE(user_id, name COLLATE NOCASE)
-            );
-
-            CREATE TABLE IF NOT EXISTS notes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                category_id INTEGER NOT NULL,
-                text TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS notes_by_user_category
-                ON notes(user_id, category_id, created_at);
-            """
+async def get_category(user_id: int, category_id: int) -> Category | None:
+    async with db.session_scope() as session:
+        return await session.scalar(
+            select(Category).where(
+                Category.user_id == user_id,
+                Category.id == category_id,
+            )
         )
 
 
-def ensure_default_categories(user_id: int) -> None:
-    """Create starter categories for a user without replacing custom ones."""
-    with _connect() as connection:
-        connection.executemany(
-            "INSERT OR IGNORE INTO categories (user_id, name) VALUES (?, ?)",
-            ((user_id, name) for name in DEFAULT_CATEGORIES),
+async def create_category(user_id: int, name: str) -> tuple[Category, bool]:
+    """Create a category, returning the category and whether it was new."""
+    async with db.session_scope() as session:
+        category = await session.scalar(
+            select(Category).where(
+                Category.user_id == user_id,
+                Category.name == name,
+            )
         )
+        if category is not None:
+            return category, False
+
+        category = Category(user_id=user_id, name=name)
+        session.add(category)
+        await session.flush()
+        return category, True
 
 
-def list_categories(user_id: int) -> list[sqlite3.Row]:
-    with _connect() as connection:
-        return connection.execute(
-            "SELECT id, name FROM categories WHERE user_id = ? ORDER BY name COLLATE NOCASE",
-            (user_id,),
-        ).fetchall()
-
-
-def get_category(user_id: int, category_id: int) -> sqlite3.Row | None:
-    with _connect() as connection:
-        return connection.execute(
-            "SELECT id, name FROM categories WHERE user_id = ? AND id = ?",
-            (user_id, category_id),
-        ).fetchone()
-
-
-def create_category(user_id: int, name: str) -> tuple[sqlite3.Row, bool]:
-    """Create a category, returning its row and whether it was newly created."""
-    with _connect() as connection:
-        cursor = connection.execute(
-            "INSERT OR IGNORE INTO categories (user_id, name) VALUES (?, ?)",
-            (user_id, name),
+async def add_note(user_id: int, category_id: int, text: str) -> Note:
+    async with db.session_scope() as session:
+        category = await session.scalar(
+            select(Category).where(
+                Category.user_id == user_id,
+                Category.id == category_id,
+            )
         )
-        category = connection.execute(
-            "SELECT id, name FROM categories WHERE user_id = ? AND name = ? COLLATE NOCASE",
-            (user_id, name),
-        ).fetchone()
-
-    if category is None:
-        raise RuntimeError("The shopping note category could not be created")
-    return category, cursor.rowcount == 1
-
-
-def add_note(user_id: int, category_id: int, text: str) -> sqlite3.Row:
-    """Add a note to one of the user's categories."""
-    with _connect() as connection:
-        category = connection.execute(
-            "SELECT id FROM categories WHERE user_id = ? AND id = ?",
-            (user_id, category_id),
-        ).fetchone()
         if category is None:
             raise ValueError("That shopping note category does not exist")
 
-        cursor = connection.execute(
-            """
-            INSERT INTO notes (user_id, category_id, text, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                user_id,
-                category_id,
-                text,
-                datetime.now(UTC).isoformat(timespec="seconds"),
-            ),
+        note = Note(
+            user_id=user_id,
+            category_id=category_id,
+            text=text,
+            created_at=datetime.now(UTC).isoformat(timespec="seconds"),
         )
-        return connection.execute(
-            "SELECT id, text, created_at FROM notes WHERE id = ?",
-            (cursor.lastrowid,),
-        ).fetchone()
+        session.add(note)
+        await session.flush()
+        return note
 
 
-def list_notes(user_id: int, category_id: int) -> list[sqlite3.Row]:
-    with _connect() as connection:
-        return connection.execute(
-            """
-            SELECT id, text, created_at
-            FROM notes
-            WHERE user_id = ? AND category_id = ?
-            ORDER BY id DESC
-            """,
-            (user_id, category_id),
-        ).fetchall()
+async def list_notes(user_id: int, category_id: int) -> list[Note]:
+    async with db.session_scope() as session:
+        result = await session.scalars(
+            select(Note)
+            .where(Note.user_id == user_id, Note.category_id == category_id)
+            .order_by(Note.id.desc())
+        )
+        return list(result.all())
+
+
+async def add_expense(
+    user_id: int,
+    expense_date: str,
+    amount_minor: int,
+    merchant: str,
+    description: str,
+    currency: str = DEFAULT_CURRENCY,
+) -> FinanceExpense:
+    """Persist one finance expense using integer minor currency units."""
+    async with db.session_scope() as session:
+        expense = FinanceExpense(
+            user_id=user_id,
+            expense_date=expense_date,
+            amount_minor=amount_minor,
+            currency=currency,
+            merchant=merchant,
+            description=description,
+            created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        )
+        session.add(expense)
+        await session.flush()
+        return expense
+
+
+async def expense_exists(
+    user_id: int,
+    expense_date: str,
+    amount_minor: int,
+    merchant: str,
+    description: str,
+    currency: str = DEFAULT_CURRENCY,
+) -> bool:
+    """Check whether an identical expense is already stored."""
+    async with db.session_scope() as session:
+        expense_id = await session.scalar(
+            select(FinanceExpense.id)
+            .where(
+                FinanceExpense.user_id == user_id,
+                FinanceExpense.expense_date == expense_date,
+                FinanceExpense.amount_minor == amount_minor,
+                FinanceExpense.currency == currency,
+                FinanceExpense.merchant == merchant,
+                FinanceExpense.description == description,
+            )
+            .limit(1)
+        )
+        return expense_id is not None
+
+
+async def finance_statistics(
+    user_id: int,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    merchant: str | None = None,
+    description: str | None = None,
+    group_by: str = "none",
+    limit: int = 10,
+) -> dict[str, object]:
+    """Return deterministic expense totals for Claude or a direct report."""
+    group_expressions = {
+        "day": FinanceExpense.expense_date,
+        "month": func.substr(FinanceExpense.expense_date, 1, 7),
+        "merchant": FinanceExpense.merchant,
+        "item": FinanceExpense.description,
+    }
+    if group_by not in group_expressions and group_by != "none":
+        raise ValueError("Unsupported finance statistics grouping")
+
+    conditions = [FinanceExpense.user_id == user_id]
+    if start_date:
+        conditions.append(FinanceExpense.expense_date >= start_date)
+    if end_date:
+        conditions.append(FinanceExpense.expense_date <= end_date)
+    if merchant:
+        conditions.append(FinanceExpense.merchant.ilike(f"%{merchant}%"))
+    if description:
+        conditions.append(FinanceExpense.description.ilike(f"%{description}%"))
+
+    safe_limit = max(1, min(limit, 50))
+    async with db.session_scope() as session:
+        totals = (
+            await session.execute(
+                select(
+                    func.count(FinanceExpense.id).label("count"),
+                    func.coalesce(func.sum(FinanceExpense.amount_minor), 0).label(
+                        "total_minor"
+                    ),
+                    func.coalesce(func.avg(FinanceExpense.amount_minor), 0).label(
+                        "average_minor"
+                    ),
+                ).where(*conditions)
+            )
+        ).one()
+        result: dict[str, object] = {
+            "count": totals.count,
+            "total_minor": totals.total_minor,
+            "average_minor": round(float(totals.average_minor), 2),
+            "currency": DEFAULT_CURRENCY,
+            "start_date": start_date,
+            "end_date": end_date,
+            "merchant_filter": merchant,
+            "description_filter": description,
+            "group_by": group_by,
+        }
+        if group_by == "none":
+            return result
+
+        expression = group_expressions[group_by]
+        grouped = (
+            await session.execute(
+                select(
+                    expression.label("label"),
+                    func.count(FinanceExpense.id).label("count"),
+                    func.sum(FinanceExpense.amount_minor).label("total_minor"),
+                )
+                .where(*conditions)
+                .group_by(expression)
+                .order_by(func.sum(FinanceExpense.amount_minor).desc())
+                .limit(safe_limit)
+            )
+        ).all()
+        result["groups"] = [
+            {
+                "label": row.label,
+                "count": row.count,
+                "total_minor": row.total_minor,
+            }
+            for row in grouped
+        ]
+        return result

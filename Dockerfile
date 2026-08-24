@@ -12,8 +12,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     SHOPPING_NOTES_DB=/app/data/shopping_notes.db
 
 # Install the locked application environment without development dependencies.
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md alembic.ini ./
 COPY src ./src
+COPY alembic ./alembic
 RUN uv sync --locked --no-dev --no-editable
 
 # Keep the database outside the image layer and run without root privileges.

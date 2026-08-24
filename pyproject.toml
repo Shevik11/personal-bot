@@ -8,8 +8,12 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "aiosqlite>=0.22.1",
+    "alembic>=1.19.1",
+    "anthropic>=1.0.0",
     "python-dotenv>=1.2.3",
     "python-telegram-bot>=22.8",
+    "sqlalchemy>=2.0.52",
 ]
 
 [project.scripts]
@@ -21,5 +25,6 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "openpyxl>=3.1.5",
     "ruff>=0.16.4",
 ]

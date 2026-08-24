@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -13,6 +11,8 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from . import storage
+from .finance import FINANCE_BUTTON
+from .models import Category, Note
 
 SHOPPING_BUTTON = "🛒 Shopping notes"
 SHOPPING_STATE = "shopping_state"
@@ -25,7 +25,9 @@ MAX_NOTE_LENGTH = 500
 
 def main_menu_markup() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [[SHOPPING_BUTTON]], resize_keyboard=True, is_persistent=True
+        [[SHOPPING_BUTTON], [FINANCE_BUTTON]],
+        resize_keyboard=True,
+        is_persistent=True,
     )
 
 
@@ -45,13 +47,13 @@ def _shopping_menu_markup() -> InlineKeyboardMarkup:
 
 
 def _category_markup(
-    categories: list[sqlite3.Row], action: str, include_new: bool = False
+    categories: list[Category], action: str, include_new: bool = False
 ) -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(
-                category["name"],
-                callback_data=f"shopping:{action}:category:{category['id']}",
+                category.name,
+                callback_data=f"shopping:{action}:category:{category.id}",
             )
         ]
         for category in categories
@@ -84,7 +86,7 @@ async def shopping_notes(
     if not user or not update.message:
         return
 
-    storage.ensure_default_categories(user.id)
+    await storage.ensure_default_categories(user.id)
     await update.message.reply_text(
         "🛒 Shopping notes\n\nWhat would you like to do?",
         reply_markup=_shopping_menu_markup(),
@@ -101,7 +103,7 @@ async def shopping_callback(
         return
 
     await query.answer()
-    storage.ensure_default_categories(user.id)
+    await storage.ensure_default_categories(user.id)
     data = query.data or ""
 
     if data == "shopping:menu":
@@ -114,7 +116,7 @@ async def shopping_callback(
 
     if data == "shopping:create":
         clear_state(context)
-        categories = storage.list_categories(user.id)
+        categories = await storage.list_categories(user.id)
         await query.edit_message_text(
             "➕ Create note\n\nChoose a product type:",
             reply_markup=_category_markup(categories, "create", include_new=True),
@@ -132,7 +134,7 @@ async def shopping_callback(
 
     if data == "shopping:view":
         clear_state(context)
-        categories = storage.list_categories(user.id)
+        categories = await storage.list_categories(user.id)
         await query.edit_message_text(
             "📋 View notes\n\nChoose a product type:",
             reply_markup=_category_markup(categories, "view"),
@@ -148,7 +150,7 @@ async def shopping_callback(
     except ValueError:
         return
 
-    category = storage.get_category(user.id, category_id)
+    category = await storage.get_category(user.id, category_id)
     if category is None:
         await query.edit_message_text(
             "That product type is no longer available.",
@@ -160,7 +162,7 @@ async def shopping_callback(
         context.user_data[SHOPPING_STATE] = STATE_NOTE_TEXT
         context.user_data[SELECTED_CATEGORY] = category_id
         await query.edit_message_text(
-            f"What do you want to buy in “{category['name']}”?\n"
+            f"What do you want to buy in “{category.name}”?\n"
             f"Send one note, up to {MAX_NOTE_LENGTH} characters.",
             reply_markup=_cancel_markup(),
         )
@@ -168,12 +170,12 @@ async def shopping_callback(
 
     if parts[1] == "view":
         clear_state(context)
-        notes = storage.list_notes(user.id, category_id)
-        await _show_notes(query, context, category["name"], notes)
+        notes = await storage.list_notes(user.id, category_id)
+        await _show_notes(query, context, category.name, notes)
 
 
 async def _show_notes(
-    query, context: ContextTypes.DEFAULT_TYPE, category_name: str, notes: list[sqlite3.Row]
+    query, context: ContextTypes.DEFAULT_TYPE, category_name: str, notes: list[Note]
 ) -> None:
     heading = f"📋 {category_name}\n\n"
     if not notes:
@@ -185,7 +187,7 @@ async def _show_notes(
         )
         return
 
-    lines = [f"• {note['text']}" for note in notes]
+    lines = [f"• {note.text}" for note in notes]
     message = heading + "\n".join(lines)
     # Telegram messages are limited to 4096 characters. Keep the first response
     # readable and send overflow as separate messages.
@@ -227,18 +229,20 @@ async def handle_shopping_text(
             )
             return True
 
-        category, created = storage.create_category(update.effective_user.id, text)
+        category, created = await storage.create_category(
+            update.effective_user.id, text
+        )
         if not created:
             await update.message.reply_text(
-                f"The product type “{category['name']}” already exists. "
+                f"The product type “{category.name}” already exists. "
                 "Send another name or press Cancel."
             )
             return True
 
         context.user_data[SHOPPING_STATE] = STATE_NOTE_TEXT
-        context.user_data[SELECTED_CATEGORY] = category["id"]
+        context.user_data[SELECTED_CATEGORY] = category.id
         await update.message.reply_text(
-            f"Product type “{category['name']}” created.\n"
+            f"Product type “{category.name}” created.\n"
             f"What do you want to buy in it? (Up to {MAX_NOTE_LENGTH} characters.)",
             reply_markup=_cancel_markup(),
         )
@@ -260,7 +264,7 @@ async def handle_shopping_text(
             )
             return True
 
-        category = storage.get_category(update.effective_user.id, category_id)
+        category = await storage.get_category(update.effective_user.id, category_id)
         if category is None:
             clear_state(context)
             await update.message.reply_text(
@@ -269,10 +273,10 @@ async def handle_shopping_text(
             )
             return True
 
-        storage.add_note(update.effective_user.id, category_id, text)
+        await storage.add_note(update.effective_user.id, category_id, text)
         clear_state(context)
         await update.message.reply_text(
-            f"✅ Saved in “{category['name']}”: {text}",
+            f"✅ Saved in “{category.name}”: {text}",
             reply_markup=main_menu_markup(),
         )
         await update.message.reply_text(

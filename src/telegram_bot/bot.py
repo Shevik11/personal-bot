@@ -14,6 +14,8 @@ from telegram.ext import (
     filters,
 )
 
+from .db import migrate_database
+from .finance import FINANCE_BUTTON, finance_callback, finance_menu, handle_finance_text
 from .shopping import (
     SHOPPING_BUTTON,
     handle_shopping_text,
@@ -21,7 +23,6 @@ from .shopping import (
     shopping_callback,
     shopping_notes,
 )
-from .storage import initialize_database
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,7 +46,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/start — welcome message\n"
             "/help — show this help\n"
             "/echo <text> — repeat text back to you\n"
-            "/shopping — open shopping notes"
+            "/shopping — open shopping notes\n"
+            "/finance — manage expenses and statistics"
         )
 
 
@@ -60,27 +62,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """Reply to regular text messages."""
     if await handle_shopping_text(update, context):
         return
+    if await handle_finance_text(update, context):
+        return
 
     del context
     if update.message:
         await update.message.reply_text(
-            f"You said: {update.message.text}\nTry /help or {SHOPPING_BUTTON}."
+            f"You said: {update.message.text}\nTry /help, {SHOPPING_BUTTON}, or {FINANCE_BUTTON}."
         )
 
 
 def build_application(token: str) -> Application:
     """Build the Telegram application and register its handlers."""
-    initialize_database()
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("echo", echo))
     application.add_handler(CommandHandler("shopping", shopping_notes))
+    application.add_handler(CommandHandler("finance", finance_menu))
     application.add_handler(
         MessageHandler(filters.Regex(f"^{SHOPPING_BUTTON}$"), shopping_notes)
     )
     application.add_handler(
+        MessageHandler(filters.Regex(f"^{FINANCE_BUTTON}$"), finance_menu)
+    )
+    application.add_handler(
         CallbackQueryHandler(shopping_callback, pattern=r"^shopping:")
+    )
+    application.add_handler(
+        CallbackQueryHandler(finance_callback, pattern=r"^finance:")
     )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
@@ -103,4 +113,5 @@ def main() -> None:
         level=logging.INFO,
     )
     LOGGER.info("Starting Telegram bot")
+    migrate_database()
     build_application(token).run_polling()
